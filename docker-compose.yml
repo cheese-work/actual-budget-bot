@@ -1,0 +1,18 @@
+services:
+  actual-budget-bot:
+    build: .
+    container_name: actual-budget-bot
+    restart: unless-stopped
+    network_mode: "host"
+    env_file:
+      - .env
+    volumes:
+      - actual-bot-cache:/data/actual-cache
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  actual-bot-cache:
