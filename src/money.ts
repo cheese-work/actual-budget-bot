@@ -36,9 +36,16 @@ function parseVndShorthand(raw: string): number | null {
 }
 
 /**
- * Accepts US (1,234.56) and EU (1.234,56) grouped decimals, plus plain
- * integers/decimals. Disambiguates by which separator appears last —
- * that one is the decimal point.
+ * Accepts US (1,234.56) and EU (1.234,56) grouped decimals, grouped
+ * integers with no fractional part (1,200,000 / 1.200.000 / 1,200 / 1.200),
+ * and plain integers/decimals.
+ *
+ * When both separators appear, the last one is the decimal point (standard
+ * US/EU disambiguation). When only one separator kind appears, it's a
+ * thousands group — not a fraction — whenever it repeats, or appears once
+ * followed by exactly 3 digits: '1,200' is 1200 dong, not 1.2 dong; a bare
+ * fractional-dong input isn't a real message this bot sees. A single
+ * occurrence followed by 1-2 digits is still read as a decimal ('4.50').
  */
 function parseDecimalAmount(raw: string): number | null {
   const trimmed = raw.trim();
@@ -47,22 +54,44 @@ function parseDecimalAmount(raw: string): number | null {
   const negative = trimmed.startsWith('-');
   const body = negative ? trimmed.slice(1) : trimmed;
 
+  const commaCount = (body.match(/,/g) ?? []).length;
+  const dotCount = (body.match(/\./g) ?? []).length;
   const lastComma = body.lastIndexOf(',');
   const lastDot = body.lastIndexOf('.');
 
   let normalized: string;
   if (lastComma === -1 && lastDot === -1) {
     normalized = body;
-  } else if (lastComma > lastDot) {
-    // EU style: '.' groups thousands, ',' is the decimal point.
-    normalized = body.replace(/\./g, '').replace(',', '.');
+  } else if (commaCount > 0 && dotCount > 0) {
+    // Both separators present: the last one is the decimal point.
+    normalized =
+      lastComma > lastDot
+        ? body.replace(/\./g, '').replace(',', '.') // EU: '.' groups, ',' decimal
+        : body.replace(/,/g, ''); // US: ',' groups, '.' decimal
+  } else if (commaCount > 0) {
+    // Only ',' appears: a group separator unless it's a single occurrence
+    // followed by 1-2 digits (then it's a decimal point).
+    normalized = isThousandsGroup(body, lastComma, commaCount)
+      ? body.replace(/,/g, '')
+      : body.replace(',', '.');
   } else {
-    // US style: ',' groups thousands, '.' is the decimal point.
-    normalized = body.replace(/,/g, '');
+    // Only '.' appears: same rule.
+    normalized = isThousandsGroup(body, lastDot, dotCount) ? body.replace(/\./g, '') : body;
   }
 
   if (!/^\d+(\.\d+)?$/.test(normalized)) return null;
   const value = Number(normalized);
   if (!Number.isFinite(value)) return null;
   return negative ? -value : value;
+}
+
+/**
+ * True when the sole separator kind in `body` is a thousands group rather
+ * than a decimal point: it repeats, or its one occurrence is followed by
+ * exactly 3 digits.
+ */
+function isThousandsGroup(body: string, lastIndex: number, count: number): boolean {
+  if (count > 1) return true;
+  const digitsAfter = body.length - lastIndex - 1;
+  return digitsAfter === 3;
 }

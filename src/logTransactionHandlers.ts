@@ -72,6 +72,11 @@ export function registerLogTransactionHandlers(bot: Bot): void {
         case 'noAccount':
           await ctx.reply(RESULT_MESSAGES.noAccount);
           break;
+        case 'duplicate':
+          // Already logged (or in flight) from the original delivery of this
+          // update — stay silent rather than telling the user their
+          // successfully-logged message "couldn't be figured out".
+          break;
       }
     } catch (err) {
       logger.error('log_transaction_failed', { err: String(err) });

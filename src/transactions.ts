@@ -15,7 +15,8 @@ export type LogResult =
   | { kind: 'logged'; summary: string }
   | { kind: 'needsConfirmation'; summary: string }
   | { kind: 'cannotParse' }
-  | { kind: 'noAccount' };
+  | { kind: 'noAccount' }
+  | { kind: 'duplicate' };
 
 function toIsoDateToday(): string {
   const d = new Date();
@@ -32,6 +33,11 @@ async function resolveAccountId(keyword: string | null): Promise<string | null> 
 
   if (keyword) {
     const lower = keyword.toLowerCase();
+    // Exact match first: an LLM-returned accountName is a real name from the
+    // list we gave it, so it deserves an exact match before the looser
+    // substring match used for a user-typed acc:/@ keyword fragment.
+    const exact = openAccounts.find((a) => a.name.toLowerCase() === lower);
+    if (exact) return exact.id;
     const match = openAccounts.find((a) => a.name.toLowerCase().includes(lower));
     if (match) return match.id;
   }
@@ -55,25 +61,36 @@ export async function handleTransactionMessage(
 ): Promise<LogResult> {
   if (!transactionStore.claimMessage(messageKey)) {
     logger.info('duplicate_message_ignored', { userId, messageKey });
-    return { kind: 'cannotParse' };
+    return { kind: 'duplicate' };
   }
 
   const deterministic = parseTransactionMessage(text);
   if (deterministic) {
     const accountId = await resolveAccountId(deterministic.accountKeyword);
-    if (!accountId) return { kind: 'noAccount' };
+    if (!accountId) {
+      transactionStore.releaseClaim(messageKey);
+      return { kind: 'noAccount' };
+    }
 
     const importedId = `tgbot:${messageKey}`;
-    const result = await importTransactions(accountId, [
-      {
-        account: accountId,
-        date: deterministic.date ?? toIsoDateToday(),
-        amount: deterministic.amount,
-        payee_name: deterministic.payee ?? undefined,
-        notes: deterministic.tag ? `#${deterministic.tag}` : undefined,
-        imported_id: importedId,
-      },
-    ]);
+    let result;
+    try {
+      result = await importTransactions(accountId, [
+        {
+          account: accountId,
+          date: deterministic.date ?? toIsoDateToday(),
+          amount: deterministic.amount,
+          payee_name: deterministic.payee ?? undefined,
+          notes: deterministic.tag ? `#${deterministic.tag}` : undefined,
+          imported_id: importedId,
+        },
+      ]);
+    } catch (err) {
+      // The write never landed — release the claim so a legitimate Telegram
+      // retry of this same update isn't silently dropped as a duplicate.
+      transactionStore.releaseClaim(messageKey);
+      throw err;
+    }
 
     const createdId = result.added[0];
     if (createdId) transactionStore.recordWrite(userId, createdId);
@@ -137,22 +154,31 @@ export async function confirmPendingTransaction(
 
   const { result } = pending;
   const accountId = await resolveAccountId(result.accountName);
-  if (!accountId) return { kind: 'noAccount' };
+  if (!accountId) {
+    transactionStore.releaseClaim(messageKey);
+    return { kind: 'noAccount' };
+  }
 
   const categoryId = await resolveCategoryId(result.categoryName);
   const importedId = `tgbot:${messageKey}`;
 
-  const written = await importTransactions(accountId, [
-    {
-      account: accountId,
-      date: result.date,
-      amount: result.amount,
-      payee_name: result.payeeName ?? undefined,
-      category: categoryId ?? undefined,
-      notes: result.notes ?? undefined,
-      imported_id: importedId,
-    },
-  ]);
+  let written;
+  try {
+    written = await importTransactions(accountId, [
+      {
+        account: accountId,
+        date: result.date,
+        amount: result.amount,
+        payee_name: result.payeeName ?? undefined,
+        category: categoryId ?? undefined,
+        notes: result.notes ?? undefined,
+        imported_id: importedId,
+      },
+    ]);
+  } catch (err) {
+    transactionStore.releaseClaim(messageKey);
+    throw err;
+  }
 
   const createdId = written.added[0];
   if (createdId) transactionStore.recordWrite(userId, createdId);

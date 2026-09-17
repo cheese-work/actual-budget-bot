@@ -15,6 +15,13 @@ const TAG_RE = /#(\S+)/;
 const ACCOUNT_RE = /(?:^|\s)(?:acc:|@)(\S+)/i;
 const DATE_TOKEN_RE =
   /\b(today|yesterday|\d{1,2}\/\d{1,2}(?:\/\d{2,4})?|\d{4}-\d{2}-\d{2})\b/i;
+// Unambiguous income signals only. Excludes bare 'in' (a preposition, not a
+// signal) — see the amount-sign comment below for why that mattered. Two
+// separate regex objects (same pattern) because a shared 'g'-flagged regex
+// would carry lastIndex state between the .test() below and this module's
+// .replace() call, corrupting matches on the second parse of a process.
+const INCOME_KEYWORD_TEST_RE = /\b(income|salary|paid|payday|refund)\b/i;
+const INCOME_KEYWORD_REPLACE_RE = /\b(income|salary|paid|payday|refund)\b/gi;
 
 /**
  * Deterministic parse of a free-text transaction message. Returns null when
@@ -47,9 +54,12 @@ export function parseTransactionMessage(
   if (minorUnits === null) return null;
 
   // Default sign: a bare amount is an expense (negative). An explicit '+' or
-  // 'income'/'in' keyword flips it positive. An explicit '-' stays negative.
+  // an unambiguous income keyword flips it positive. An explicit '-' stays
+  // negative. Deliberately excludes bare 'in' — it's a common preposition
+  // ('dinner in Hanoi'), not an income signal, and inverting on it silently
+  // wrote expenses as income.
   const hasExplicitSign = amountMatch.token.trim().startsWith('-') || amountMatch.hadPlus;
-  const isIncome = amountMatch.hadPlus || /\b(income|in)\b/i.test(remaining);
+  const isIncome = amountMatch.hadPlus || INCOME_KEYWORD_TEST_RE.test(remaining);
   const amount = hasExplicitSign
     ? minorUnits
     : isIncome
@@ -57,7 +67,7 @@ export function parseTransactionMessage(
       : -Math.abs(minorUnits);
 
   remaining = (remaining.slice(0, amountMatch.start) + remaining.slice(amountMatch.end))
-    .replace(/\b(income|in)\b/gi, '')
+    .replace(INCOME_KEYWORD_REPLACE_RE, '')
     .replace(/\s{2,}/g, ' ')
     .trim();
 
@@ -75,26 +85,61 @@ function removeMatch(text: string, match: RegExpMatchArray): string {
 
 type AmountToken = { token: string; start: number; end: number; hadPlus: boolean };
 
-/** Finds the first standalone number-like token, e.g. '45k', '1,234.56', '4.50'. */
+/**
+ * Finds the amount token among all standalone number-like tokens in the
+ * message, e.g. '45k', '1,234.56', '4.50'. A bare small integer next to a
+ * suffixed or decimal-grouped token is usually a quantity ('2 coffees 90k'),
+ * not the amount, so a suffixed/grouped candidate always wins over a bare
+ * one regardless of position. When more than one bare-integer candidate
+ * remains and none is marked, position alone can't disambiguate — return
+ * null so the caller falls back to the LLM instead of guessing.
+ */
 function findAmountToken(text: string): AmountToken | null {
   const re = /([+-])?(\d[\d.,]*)\s*(k|tr)?\b/gi;
+  const candidates: AmountToken[] = [];
   let match: RegExpExecArray | null;
   while ((match = re.exec(text)) !== null) {
     const sign = match[1] ?? '';
     const digits = match[2];
     const suffix = match[3] ?? '';
     if (!/\d/.test(digits)) continue;
-    return {
+    candidates.push({
       token: `${sign === '-' ? '-' : ''}${digits}${suffix}`,
       start: match.index,
       end: match.index + match[0].length,
       hadPlus: sign === '+',
-    };
+    });
   }
+  if (candidates.length === 0) return null;
+  if (candidates.length === 1) return candidates[0];
+
+  const marked = candidates.filter(isMarkedAmountToken);
+  if (marked.length === 1) return marked[0];
+  if (marked.length > 1) return null; // more than one confident candidate: don't guess
+
+  // No suffixed/decimal-grouped/signed candidate at all: several bare
+  // integers with nothing to rank them ('table for 4 500k' already resolved
+  // above via the suffix; this is the pure 'table for 4 5' case). Decline.
   return null;
 }
 
-function resolveDateToken(token: string, today: Date): string {
+/** A token that isn't just a bare small integer: has a k/tr suffix, an explicit sign, or grouping/decimal punctuation. */
+function isMarkedAmountToken(candidate: AmountToken): boolean {
+  const bareDigits = candidate.token.replace(/^[+-]/, '');
+  const hasSuffix = /[a-z]/i.test(bareDigits);
+  const hasPunctuation = /[.,]/.test(bareDigits);
+  const hasSign = candidate.token.startsWith('-') || candidate.hadPlus;
+  return hasSuffix || hasPunctuation || hasSign;
+}
+
+/**
+ * Resolves a matched date token to YYYY-MM-DD, or null when it doesn't name
+ * a real calendar date (`new Date` silently rolls invalid month/day over
+ * into a neighboring date instead of throwing, e.g. 02/31 -> Mar 3). A null
+ * here still consumes the token from the message text; the caller treats a
+ * null date the same as no date token at all (defaults to today at write).
+ */
+function resolveDateToken(token: string, today: Date): string | null {
   const lower = token.toLowerCase();
   if (lower === 'today') return toIsoDate(today);
   if (lower === 'yesterday') {
@@ -102,14 +147,25 @@ function resolveDateToken(token: string, today: Date): string {
     d.setDate(d.getDate() - 1);
     return toIsoDate(d);
   }
-  if (/^\d{4}-\d{2}-\d{2}$/.test(token)) return token;
+
+  if (/^\d{4}-\d{2}-\d{2}$/.test(token)) {
+    const [year, month, day] = token.split('-').map((p) => Number(p));
+    return isRealCalendarDate(year, month, day) ? token : null;
+  }
 
   // MM/DD or MM/DD/YYYY — assume US ordering, current year when omitted.
   const parts = token.split('/').map((p) => Number(p));
   const [month, day, yearPart] = parts;
   const year = yearPart === undefined ? today.getFullYear() : normalizeYear(yearPart);
+  if (!isRealCalendarDate(year, month, day)) return null;
+  return toIsoDate(new Date(year, month - 1, day));
+}
+
+/** Rejects month/day combinations `new Date` would silently roll over into a different date. */
+function isRealCalendarDate(year: number, month: number, day: number): boolean {
+  if (month < 1 || month > 12 || day < 1 || day > 31) return false;
   const d = new Date(year, month - 1, day);
-  return toIsoDate(d);
+  return d.getFullYear() === year && d.getMonth() === month - 1 && d.getDate() === day;
 }
 
 function normalizeYear(year: number): number {

@@ -56,11 +56,11 @@ test('1.234,56 groceries -> EU grouped decimal, rounded to nearest dong', () => 
   assert.equal(result?.payee, 'groceries');
 });
 
-test('+500000 salary -> explicit plus makes it income', () => {
+test('+500000 salary -> explicit plus makes it income; "salary" is an income keyword, stripped from payee', () => {
   const result = parseTransactionMessage('+500000 salary', TODAY);
   assert.deepEqual(result, {
     amount: 500000,
-    payee: 'salary',
+    payee: null,
     tag: null,
     accountKeyword: null,
     date: null,
@@ -171,7 +171,95 @@ test('99k xang xe -> Vietnamese payee text preserved', () => {
   assert.equal(result?.payee, 'xang xe');
 });
 
-test('200k -120 ambiguous multi-number still picks first amount token', () => {
+test('200k grab -> single candidate resolves normally', () => {
   const result = parseTransactionMessage('200k grab', TODAY);
   assert.equal(result?.amount, -200000);
+});
+
+// --- Regression: B1, sign inverted by the bare preposition 'in' ---
+
+test("dinner in Hanoi 250k -> preposition 'in' must not flip sign to income", () => {
+  const result = parseTransactionMessage('dinner in Hanoi 250k', TODAY);
+  assert.equal(result?.amount, -250000);
+});
+
+test("lunch in Saigon 100k -> preposition 'in' must not flip sign to income", () => {
+  const result = parseTransactionMessage('lunch in Saigon 100k', TODAY);
+  assert.equal(result?.amount, -100000);
+});
+
+test("coffee in office 30k -> preposition 'in' must not flip sign to income", () => {
+  const result = parseTransactionMessage('coffee in office 30k', TODAY);
+  assert.equal(result?.amount, -30000);
+});
+
+test("spent 45k in grab -> preposition 'in' must not flip sign to income", () => {
+  const result = parseTransactionMessage('spent 45k in grab', TODAY);
+  assert.equal(result?.amount, -45000);
+});
+
+test("45k grab in cash -> preposition 'in' must not flip sign to income", () => {
+  const result = parseTransactionMessage('45k grab in cash', TODAY);
+  assert.equal(result?.amount, -45000);
+});
+
+test('income tax 200k -> explicit income keyword still flips sign (paying tax stays user-declared)', () => {
+  const result = parseTransactionMessage('income tax 200k', TODAY);
+  assert.equal(result?.amount, 200000);
+});
+
+test('salary 5tr -> unambiguous income keyword', () => {
+  const result = parseTransactionMessage('salary 5tr', TODAY);
+  assert.equal(result?.amount, 5_000_000);
+});
+
+test('got paid 5tr -> unambiguous income keyword', () => {
+  const result = parseTransactionMessage('got paid 5tr', TODAY);
+  assert.equal(result?.amount, 5_000_000);
+});
+
+// --- Regression: B2, first-number-wins swallowing the real amount ---
+
+test('bought 2 coffees 90k -> suffixed amount wins over the bare quantity', () => {
+  const result = parseTransactionMessage('bought 2 coffees 90k', TODAY);
+  assert.equal(result?.amount, -90000);
+});
+
+test('2 beers 80k -> suffixed amount wins over the leading bare quantity', () => {
+  const result = parseTransactionMessage('2 beers 80k', TODAY);
+  assert.equal(result?.amount, -80000);
+});
+
+test('iphone 15 pro 30tr -> suffixed amount wins over the bare quantity', () => {
+  const result = parseTransactionMessage('iphone 15 pro 30tr', TODAY);
+  assert.equal(result?.amount, -30_000_000);
+});
+
+test('table for 4 500k -> suffixed amount wins over the bare quantity', () => {
+  const result = parseTransactionMessage('table for 4 500k', TODAY);
+  assert.equal(result?.amount, -500000);
+});
+
+test('two bare integers with nothing to rank them -> declines rather than guessing', () => {
+  const result = parseTransactionMessage('table for 4 5', TODAY);
+  assert.equal(result, null);
+});
+
+// --- Regression: N1, invalid dates silently rolled over instead of rejected ---
+
+test('45k grab 2026-13-45 -> invalid ISO date is rejected, not passed through', () => {
+  const result = parseTransactionMessage('45k grab 2026-13-45', TODAY);
+  assert.equal(result?.date, null);
+  assert.equal(result?.amount, -45000);
+});
+
+test('45k grab 02/31 -> invalid MM/DD is rejected, not rolled over to a real date', () => {
+  const result = parseTransactionMessage('45k grab 02/31', TODAY);
+  assert.equal(result?.date, null);
+});
+
+test('45k grab 99/99 -> wildly invalid MM/DD is rejected, rest of the message still parses', () => {
+  const result = parseTransactionMessage('45k grab 99/99', TODAY);
+  assert.equal(result?.date, null);
+  assert.equal(result?.amount, -45000);
 });

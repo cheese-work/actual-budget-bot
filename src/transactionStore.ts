@@ -64,6 +64,15 @@ class TransactionStore {
     return true;
   }
 
+  /**
+   * Releases a claim after the write it guarded failed to land, so a
+   * legitimate Telegram retry of the same update isn't dropped as a
+   * duplicate of a transaction that was never actually written.
+   */
+  releaseClaim(key: string): void {
+    this.processedMessages.delete(key);
+  }
+
   private sweepProcessedMessages(): void {
     const cutoff = Date.now() - PROCESSED_MESSAGE_TTL_MS;
     for (const [key, seenAt] of this.processedMessages) {
