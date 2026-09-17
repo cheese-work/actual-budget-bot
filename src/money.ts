@@ -10,3 +10,9 @@ const vndFormatter = new Intl.NumberFormat('vi-VN', {
 export function formatVnd(minorUnits: number): string {
   return `${vndFormatter.format(minorUnits)} ₫`;
 }
+
+/** Signed VND amount with an explicit `+`/`-` sign, e.g. for a balance delta. */
+export function formatVndDelta(minorUnits: number): string {
+  const sign = minorUnits > 0 ? '+' : minorUnits < 0 ? '-' : '';
+  return `${sign}${formatVnd(Math.abs(minorUnits))}`;
+}

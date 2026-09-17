@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { formatVnd } from './money.js';
+import { formatVnd, formatVndDelta } from './money.js';
 
 test('formats whole VND amounts with vi-VN grouping, no minor-unit scaling', () => {
   assert.equal(formatVnd(45000), '45.000 ₫');
@@ -20,4 +20,16 @@ test('formats zero and negative amounts', () => {
 
 test('formats large amounts', () => {
   assert.equal(formatVnd(1500000), '1.500.000 ₫');
+});
+
+test('formatVndDelta signs a positive delta', () => {
+  assert.equal(formatVndDelta(45000), '+45.000 ₫');
+});
+
+test('formatVndDelta signs a negative delta', () => {
+  assert.equal(formatVndDelta(-45000), '-45.000 ₫');
+});
+
+test('formatVndDelta has no sign for zero', () => {
+  assert.equal(formatVndDelta(0), '0 ₫');
 });
