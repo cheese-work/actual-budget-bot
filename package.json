@@ -13,7 +13,7 @@
     "test": "node --import tsx --test src/**/*.test.ts"
   },
   "dependencies": {
-    "@actual-app/api": "^25.9.0",
+    "@actual-app/api": "^26.9.0",
     "grammy": "^1.30.0"
   },
   "devDependencies": {
