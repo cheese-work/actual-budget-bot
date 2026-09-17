@@ -16,12 +16,16 @@ const ACCOUNT_RE = /(?:^|\s)(?:acc:|@)(\S+)/i;
 const DATE_TOKEN_RE =
   /\b(today|yesterday|\d{1,2}\/\d{1,2}(?:\/\d{2,4})?|\d{4}-\d{2}-\d{2})\b/i;
 // Unambiguous income signals only. Excludes bare 'in' (a preposition, not a
-// signal) — see the amount-sign comment below for why that mattered. Two
-// separate regex objects (same pattern) because a shared 'g'-flagged regex
-// would carry lastIndex state between the .test() below and this module's
-// .replace() call, corrupting matches on the second parse of a process.
-const INCOME_KEYWORD_TEST_RE = /\b(income|salary|paid|payday|refund)\b/i;
-const INCOME_KEYWORD_REPLACE_RE = /\b(income|salary|paid|payday|refund)\b/gi;
+// signal) — see the amount-sign comment below for why that mattered. Also
+// excludes bare 'paid': "paid X" is the single most common way to phrase an
+// EXPENSE ('paid rent 5tr', 'paid grab 45k'), so only the receiving-verb
+// phrasing ('got paid', 'paid me') counts as an income signal — bare 'paid'
+// does not. Two separate regex objects (same pattern) because a shared
+// 'g'-flagged regex would carry lastIndex state between the .test() below
+// and this module's .replace() call, corrupting matches on the second parse
+// of a process.
+const INCOME_KEYWORD_TEST_RE = /\b(income|salary|payday|refund|got paid|paid me)\b/i;
+const INCOME_KEYWORD_REPLACE_RE = /\b(income|salary|payday|refund|got paid|paid me)\b/gi;
 
 /**
  * Deterministic parse of a free-text transaction message. Returns null when

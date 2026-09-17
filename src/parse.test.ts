@@ -218,6 +218,48 @@ test('got paid 5tr -> unambiguous income keyword', () => {
   assert.equal(result?.amount, 5_000_000);
 });
 
+test('paid me 5tr -> receiving-verb phrasing is an income keyword', () => {
+  const result = parseTransactionMessage('paid me 5tr', TODAY);
+  assert.equal(result?.amount, 5_000_000);
+});
+
+// --- Regression: B1-residue, bare 'paid' inverting ordinary expense phrasing ---
+
+test("paid rent 5tr -> bare 'paid' must not flip sign to income", () => {
+  const result = parseTransactionMessage('paid rent 5tr', TODAY);
+  assert.equal(result?.amount, -5_000_000);
+});
+
+test("paid grab 45k -> bare 'paid' must not flip sign to income", () => {
+  const result = parseTransactionMessage('paid grab 45k', TODAY);
+  assert.equal(result?.amount, -45000);
+});
+
+test("paid for lunch 100k -> bare 'paid' must not flip sign to income", () => {
+  const result = parseTransactionMessage('paid for lunch 100k', TODAY);
+  assert.equal(result?.amount, -100000);
+});
+
+test("paid electricity bill 300k -> bare 'paid' must not flip sign to income", () => {
+  const result = parseTransactionMessage('paid electricity bill 300k', TODAY);
+  assert.equal(result?.amount, -300000);
+});
+
+test("paid back loan 500k -> bare 'paid' must not flip sign to income", () => {
+  const result = parseTransactionMessage('paid back loan 500k', TODAY);
+  assert.equal(result?.amount, -500000);
+});
+
+test("rent paid 5tr -> bare 'paid' must not flip sign to income regardless of position", () => {
+  const result = parseTransactionMessage('rent paid 5tr', TODAY);
+  assert.equal(result?.amount, -5_000_000);
+});
+
+test("grab 45k paid -> bare 'paid' must not flip sign to income regardless of position", () => {
+  const result = parseTransactionMessage('grab 45k paid', TODAY);
+  assert.equal(result?.amount, -45000);
+});
+
 // --- Regression: B2, first-number-wins swallowing the real amount ---
 
 test('bought 2 coffees 90k -> suffixed amount wins over the bare quantity', () => {
