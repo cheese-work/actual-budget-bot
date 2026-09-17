@@ -24,6 +24,9 @@ export const config = {
   actualServerUrl: required('ACTUAL_SERVER_URL'),
   actualSyncId: required('ACTUAL_SYNC_ID'),
   actualPassword: process.env.ACTUAL_PASSWORD ?? '',
+  // End-to-end encrypted budget files need their own password, separate from the
+  // server password. Empty means the file is not encrypted.
+  actualFilePassword: process.env.ACTUAL_FILE_PASSWORD ?? '',
   actualDataDir: process.env.ACTUAL_DATA_DIR ?? '/data/actual-cache',
   allowedTelegramUserIds: parseAllowedUserIds(process.env.ALLOWED_TELEGRAM_USER_IDS),
   syncIntervalMs: Number(process.env.SYNC_INTERVAL_MS ?? 5 * 60 * 1000),

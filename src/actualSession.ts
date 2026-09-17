@@ -13,7 +13,10 @@ export async function startActualSession(): Promise<void> {
     serverURL: config.actualServerUrl,
     password: config.actualPassword,
   });
-  await actualApi.downloadBudget(config.actualSyncId);
+  await actualApi.downloadBudget(
+    config.actualSyncId,
+    config.actualFilePassword ? { password: config.actualFilePassword } : undefined,
+  );
   ready = true;
   logger.info('actual_session_started', { syncId: config.actualSyncId });
 
