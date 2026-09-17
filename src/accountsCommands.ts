@@ -2,6 +2,7 @@ import { Bot } from 'grammy';
 import { logger } from './logger.js';
 import { formatVnd, formatVndDelta } from './money.js';
 import {
+  AdjustmentWriteFailedError,
   closeFundingSource,
   createFundingSource,
   getBalance,
@@ -202,7 +203,17 @@ export function registerAccountsCommands(bot: Bot): void {
           return;
         }
         pending.delete(userId);
-        const delta = await setBalance(state.accountId, state.statedBalance);
+        let delta: number;
+        try {
+          delta = await setBalance(state.accountId, state.statedBalance);
+        } catch (err) {
+          if (err instanceof AdjustmentWriteFailedError) {
+            logger.error('balance_adjustment_write_failed', { accountId: state.accountId });
+            await ctx.reply(`Couldn't write the adjustment for ${state.accountName} — balance unchanged. Try again.`);
+            return;
+          }
+          throw err;
+        }
         logger.info('balance_adjusted', { accountId: state.accountId, delta });
         await ctx.reply(
           `${state.accountName} set to ${formatVnd(state.statedBalance)} (adjustment ${formatVndDelta(delta)}).`,
