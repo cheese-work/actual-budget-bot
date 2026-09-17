@@ -129,6 +129,19 @@ const DEFAULT_RECENT_LIMIT = 10;
 const MAX_RECENT_LIMIT = 50;
 const SPENDING_QUERY_PATTERN = /how much|what did i spend|spending on/i;
 
+const HELP_TEXT = [
+  '*Reports*',
+  '/balance — every open account plus total',
+  '/recent [n] — last n transactions, default 10, max 50',
+  '/summary — this month\'s spending by category',
+  '',
+  '*Ask a question*',
+  'Just type it, no command needed:',
+  '"how much on food this month?"',
+  '"what did I spend yesterday?"',
+  'Recognized time phrases: today, yesterday, this month, last month (defaults to this month).',
+].join('\n');
+
 function parseRecentLimit(arg: string | undefined): number {
   if (!arg) return DEFAULT_RECENT_LIMIT;
   const parsed = Number.parseInt(arg, 10);
@@ -152,6 +165,10 @@ async function withActualReadyGuard(ctx: Context, run: () => Promise<string>): P
 
 /** Registers the read-side report commands. Call once from bot.ts. */
 export function registerReportCommands(bot: Bot): void {
+  bot.command('help', async (ctx) => {
+    await ctx.reply(HELP_TEXT, { parse_mode: 'Markdown' });
+  });
+
   bot.command('balance', (ctx) => withActualReadyGuard(ctx, getBalanceReport));
 
   bot.command('recent', (ctx) => {

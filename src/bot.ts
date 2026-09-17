@@ -17,7 +17,7 @@ export function createBot(): Bot {
   });
 
   bot.command('start', async (ctx) => {
-    await ctx.reply('Bot is up. Try /ping.');
+    await ctx.reply('Bot is up. Try /help to see what I can do.');
   });
 
   bot.command('ping', async (ctx) => {
