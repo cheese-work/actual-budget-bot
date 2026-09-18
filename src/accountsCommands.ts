@@ -1,4 +1,4 @@
-import { Bot } from 'grammy';
+import { Composer, type Context } from 'grammy';
 import { logger } from './logger.js';
 import { formatVnd, formatVndDelta } from './money.js';
 import {
@@ -47,7 +47,7 @@ async function findAccountByName(name: string) {
   return accounts.find((a) => a.name.toLowerCase() === needle);
 }
 
-export function registerAccountsCommands(bot: Bot): void {
+export function registerAccountsCommands(bot: Composer<Context>): void {
   bot.command('accounts', async (ctx) => {
     const accounts = await listAccounts();
     if (accounts.length === 0) {
