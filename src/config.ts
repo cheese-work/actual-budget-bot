@@ -35,6 +35,12 @@ export const config = {
   // that path degrades to "please rephrase" instead of throwing.
   anthropicApiKey: process.env.ANTHROPIC_API_KEY ?? '',
   anthropicModel: process.env.ANTHROPIC_MODEL ?? 'claude-haiku-4-5-20251001',
+  // OmniRoute is an Anthropic-API-compatible proxy: setting a base URL and
+  // auth token routes both the text-fallback and vision lanes through it
+  // instead of hitting the vendor API directly with anthropicApiKey.
+  anthropicBaseUrl: process.env.ANTHROPIC_BASE_URL ?? '',
+  anthropicAuthToken: process.env.ANTHROPIC_AUTH_TOKEN ?? '',
+  anthropicVisionModel: process.env.ANTHROPIC_VISION_MODEL ?? 'claude-haiku-4-5-20251001',
 };
 
 export function isAllowedUser(userId: number | undefined): boolean {
