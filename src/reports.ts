@@ -1,12 +1,12 @@
 import * as actualApi from '@actual-app/api';
-import type { Bot, Context } from 'grammy';
+import type { Composer, Context } from 'grammy';
 import { formatVnd } from './money.js';
 import { renderTextTable } from './textTable.js';
 import { parseSpendingQuery } from './spendingQuery.js';
 import { logger } from './logger.js';
 import { isActualReady } from './actualSession.js';
 
-type QueryRow = Record<string, unknown>;
+export type QueryRow = Record<string, unknown>;
 
 async function runAql(query: ReturnType<typeof actualApi.q>): Promise<QueryRow[]> {
   const result = (await actualApi.aqlQuery(query)) as { data: QueryRow[] };
@@ -67,6 +67,14 @@ async function resolveCategoryName(candidate: string): Promise<string | undefine
   return match?.name;
 }
 
+/** Formats a spending-query total (`total` is a non-positive sum of outflows). */
+export function formatSpendingReport(total: number, scope: string, label: string): string {
+  if (total === 0) {
+    return `Nothing spent ${scope} for ${label}.`;
+  }
+  return `Spent ${scope} for ${label}: ${formatVnd(Math.abs(total))}`;
+}
+
 export async function getSpendingQueryReport(text: string): Promise<string> {
   const { category: rawCategory, range } = parseSpendingQuery(text);
 
@@ -77,6 +85,7 @@ export async function getSpendingQueryReport(text: string): Promise<string> {
 
   const filter: Record<string, unknown> = {
     date: { $gte: range.start, $lte: range.end },
+    amount: { $lt: 0 },
   };
   if (categoryName) {
     filter['category.name'] = categoryName;
@@ -92,27 +101,11 @@ export async function getSpendingQueryReport(text: string): Promise<string> {
   const total = Number(rows[0]?.total ?? 0);
   const scope = categoryName ? `on ${categoryName}` : 'total';
 
-  if (total === 0) {
-    return `Nothing spent ${scope} for ${range.label}.`;
-  }
-
-  return `Spent ${scope} for ${range.label}: ${formatVnd(Math.abs(total))}`;
+  return formatSpendingReport(total, scope, range.label);
 }
 
-export async function getMonthlySummaryReport(): Promise<string> {
-  const now = new Date();
-  const start = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1)).toISOString().slice(0, 10);
-  const end = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 0)).toISOString().slice(0, 10);
-
-  const rows = await runAql(
-    actualApi
-      .q('transactions')
-      .filter({ date: { $gte: start, $lte: end } })
-      .groupBy('category.name')
-      .orderBy({ 'category.name': 'asc' })
-      .select(['category.name', { amount: { $sum: '$amount' } }]),
-  );
-
+/** Renders category/amount rows into the monthly-summary text block (rows are expected to be non-positive sums). */
+export function formatMonthlySummary(rows: QueryRow[]): string {
   const categorized = rows.filter((r) => r['category.name'] != null);
 
   if (categorized.length === 0) {
@@ -123,6 +116,23 @@ export async function getMonthlySummaryReport(): Promise<string> {
   const table = renderTextTable(['Category', 'Spent'], tableRows);
 
   return ['```', table, '```'].join('\n');
+}
+
+export async function getMonthlySummaryReport(): Promise<string> {
+  const now = new Date();
+  const start = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1)).toISOString().slice(0, 10);
+  const end = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 0)).toISOString().slice(0, 10);
+
+  const rows = await runAql(
+    actualApi
+      .q('transactions')
+      .filter({ date: { $gte: start, $lte: end }, amount: { $lt: 0 } })
+      .groupBy('category.name')
+      .orderBy({ 'category.name': 'asc' })
+      .select(['category.name', { amount: { $sum: '$amount' } }]),
+  );
+
+  return formatMonthlySummary(rows);
 }
 
 const DEFAULT_RECENT_LIMIT = 10;
@@ -164,7 +174,7 @@ async function withActualReadyGuard(ctx: Context, run: () => Promise<string>): P
 }
 
 /** Registers the read-side report commands. Call once from bot.ts. */
-export function registerReportCommands(bot: Bot): void {
+export function registerReportCommands(bot: Composer<Context>): void {
   bot.command('help', async (ctx) => {
     await ctx.reply(HELP_TEXT, { parse_mode: 'Markdown' });
   });

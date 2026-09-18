@@ -38,6 +38,29 @@ export async function getAccountCount(): Promise<number> {
   return accounts.length;
 }
 
+export async function getAccounts() {
+  return actualApi.getAccounts();
+}
+
+export async function getCategories() {
+  return actualApi.getCategories();
+}
+
+export async function getPayees() {
+  return actualApi.getPayees();
+}
+
+export async function importTransactions(
+  accountId: string,
+  transactions: Parameters<typeof actualApi.importTransactions>[1],
+) {
+  return actualApi.importTransactions(accountId, transactions);
+}
+
+export async function deleteTransaction(id: string): Promise<void> {
+  await actualApi.deleteTransaction(id);
+}
+
 export async function stopActualSession(): Promise<void> {
   if (syncTimer) clearInterval(syncTimer);
   if (!ready) return;
