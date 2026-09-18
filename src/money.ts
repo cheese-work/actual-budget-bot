@@ -11,6 +11,12 @@ export function formatVnd(minorUnits: number): string {
   return `${vndFormatter.format(minorUnits)} ₫`;
 }
 
+/** Signed VND amount with an explicit `+`/`-` sign, e.g. for a balance delta. */
+export function formatVndDelta(minorUnits: number): string {
+  const sign = minorUnits > 0 ? '+' : minorUnits < 0 ? '-' : '';
+  return `${sign}${formatVnd(Math.abs(minorUnits))}`;
+}
+
 /**
  * VND has zero minor units, so a parsed VND amount IS the integer to store
  * (no *100). This bot's budget is VND-only; a fractional amount (US/EU
