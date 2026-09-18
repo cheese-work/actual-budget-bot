@@ -2,6 +2,7 @@ import { Bot } from 'grammy';
 import { config, isAllowedUser } from './config.js';
 import { logger } from './logger.js';
 import { getAccountCount, isActualReady } from './actualSession.js';
+import { registerLogTransactionHandlers } from './logTransactionHandlers.js';
 import { registerReportCommands } from './reports.js';
 
 export function createBot(): Bot {
@@ -34,7 +35,15 @@ export function createBot(): Bot {
     }
   });
 
+  // Order matters: both modules register a message:text handler. Reports
+  // must run first — its handler calls next() for anything that doesn't
+  // match a spending-query pattern, falling through to log-transaction
+  // cleanly. The log handler replies and stops on almost everything, so
+  // registering it first would make report queries unreachable (and worse,
+  // a query that happens to contain an amount would get silently logged as
+  // a transaction).
   registerReportCommands(bot);
+  registerLogTransactionHandlers(bot);
 
   bot.catch((err) => {
     logger.error('bot_error', { err: String(err.error), ctx: err.ctx.update.update_id });

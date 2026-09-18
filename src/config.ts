@@ -30,6 +30,11 @@ export const config = {
   actualDataDir: process.env.ACTUAL_DATA_DIR ?? '/data/actual-cache',
   allowedTelegramUserIds: parseAllowedUserIds(process.env.ALLOWED_TELEGRAM_USER_IDS),
   syncIntervalMs: Number(process.env.SYNC_INTERVAL_MS ?? 5 * 60 * 1000),
+  // Only required for the free-text transaction fallback path (ambiguous
+  // messages the deterministic parser can't handle). Absent when unset;
+  // that path degrades to "please rephrase" instead of throwing.
+  anthropicApiKey: process.env.ANTHROPIC_API_KEY ?? '',
+  anthropicModel: process.env.ANTHROPIC_MODEL ?? 'claude-haiku-4-5-20251001',
 };
 
 export function isAllowedUser(userId: number | undefined): boolean {
