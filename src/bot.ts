@@ -2,6 +2,7 @@ import { Bot } from 'grammy';
 import { config, isAllowedUser } from './config.js';
 import { logger } from './logger.js';
 import { getAccountCount, isActualReady } from './actualSession.js';
+import { registerReportCommands } from './reports.js';
 
 export function createBot(): Bot {
   const bot = new Bot(config.telegramBotToken);
@@ -16,7 +17,7 @@ export function createBot(): Bot {
   });
 
   bot.command('start', async (ctx) => {
-    await ctx.reply('Bot is up. Try /ping.');
+    await ctx.reply('Bot is up. Try /help to see what I can do.');
   });
 
   bot.command('ping', async (ctx) => {
@@ -32,6 +33,8 @@ export function createBot(): Bot {
       await ctx.reply('pong (Actual reachability check failed)');
     }
   });
+
+  registerReportCommands(bot);
 
   bot.catch((err) => {
     logger.error('bot_error', { err: String(err.error), ctx: err.ctx.update.update_id });
