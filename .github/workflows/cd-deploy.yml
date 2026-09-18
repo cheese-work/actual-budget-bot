@@ -1,0 +1,91 @@
+name: CD deploy to C00
+
+# Auto-deploy: every push to master builds the bot image on the X99 build
+# runner and ships it to C00. Workspace topology is build-on-X99 /
+# deploy-to-C00 — C00 is not provisioned for builds, so the image is built
+# here and streamed to C00 as a docker save/load over SSH. No registry is
+# involved, which is why no registry credential has to exist on C00.
+#
+# The SSH key in C00_CD_SSH_KEY is pinned on C00 to a forced command
+# (`cd-deploy-entry.sh`) with `restrict`, so it cannot open a shell, read
+# files, or forward ports. Its entire vocabulary is `deploy <tag>`.
+#
+# Rollback is C00-side: cd-deploy-entry.sh records the running image, waits
+# for `bot_started` on the new one, and restores the previous image if the
+# new container does not come up.
+
+on:
+  push:
+    branches: [master]
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "Git ref to build and deploy"
+        required: true
+        default: master
+
+permissions:
+  contents: read
+
+concurrency:
+  # One deploy at a time. cd-deploy-entry.sh also holds a flock on C00 for
+  # anyone who bypasses this workflow.
+  group: cd-deploy-actual-budget-bot-c00
+  cancel-in-progress: false
+
+jobs:
+  build-and-deploy:
+    runs-on: [self-hosted, linux, x64, cheese-x99]
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.ref || github.sha }}
+          fetch-depth: 1
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Typecheck
+        run: npx tsc --noEmit
+
+      - name: Test
+        run: npm test
+
+      - name: Resolve image tag
+        id: tag
+        run: echo "tag=$(git rev-parse --short=7 HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Build image
+        run: docker build -t "actual-budget-bot:${{ steps.tag.outputs.tag }}" .
+
+      - name: Ship image to C00 and deploy
+        env:
+          C00_CD_SSH_KEY: ${{ secrets.C00_CD_SSH_KEY }}
+          C00_CD_HOST: ${{ secrets.C00_CD_HOST }}
+          C00_CD_USER: ${{ secrets.C00_CD_USER }}
+          TAG: ${{ steps.tag.outputs.tag }}
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.ssh
+          printf '%s\n' "$C00_CD_SSH_KEY" > ~/.ssh/c00_cd_key
+          chmod 600 ~/.ssh/c00_cd_key
+          ssh-keyscan -H "$C00_CD_HOST" >> ~/.ssh/known_hosts 2>/dev/null
+
+          # `docker save | ssh` streams the image straight into the forced
+          # command's stdin. Exit status is the deploy's own: a failed
+          # health check on C00 fails this job after C00 has already rolled
+          # itself back.
+          docker save "actual-budget-bot:${TAG}" | gzip -1 | \
+            ssh -i ~/.ssh/c00_cd_key -o BatchMode=yes \
+              "${C00_CD_USER}@${C00_CD_HOST}" "deploy ${TAG}"
+
+      - name: Scrub deploy key
+        if: always()
+        run: rm -f ~/.ssh/c00_cd_key
