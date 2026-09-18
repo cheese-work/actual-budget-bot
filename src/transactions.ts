@@ -10,6 +10,7 @@ import {
 } from './actualSession.js';
 import { formatVnd } from './money.js';
 import { logger } from './logger.js';
+import { merchantRules } from './merchantRules.js';
 
 export type LogResult =
   | { kind: 'logged'; summary: string }
@@ -26,7 +27,10 @@ function toIsoDateToday(): string {
   return `${y}-${m}-${day}`;
 }
 
-async function resolveAccountId(keyword: string | null): Promise<string | null> {
+// Exported so imageTransaction.ts (a sibling write path that also lands
+// through confirmPendingTransaction) resolves accounts/categories the same
+// way instead of duplicating this logic.
+export async function resolveAccountId(keyword: string | null): Promise<string | null> {
   const accounts = await getAccounts();
   const openAccounts = accounts.filter((a) => !a.closed);
   if (openAccounts.length === 0) return null;
@@ -183,6 +187,13 @@ export async function confirmPendingTransaction(
   const createdId = written.added[0];
   if (createdId) transactionStore.recordWrite(userId, createdId);
 
+  // Learn the merchant -> category mapping so a repeat from the same
+  // merchant (image path especially — see imageTransaction.ts) skips the
+  // categorization model call entirely.
+  if (result.payeeName && categoryId && result.categoryName) {
+    merchantRules.remember(result.payeeName, categoryId, result.categoryName);
+  }
+
   return {
     kind: 'logged',
     summary: `Logged ${formatVnd(result.amount)}${result.payeeName ? ` — ${result.payeeName}` : ''}`,
@@ -194,7 +205,7 @@ export function cancelPendingTransaction(userId: number): boolean {
   return pending !== null;
 }
 
-async function resolveCategoryId(categoryName: string | null): Promise<string | null> {
+export async function resolveCategoryId(categoryName: string | null): Promise<string | null> {
   if (!categoryName) return null;
   const categories = await getCategories();
   const lower = categoryName.toLowerCase();

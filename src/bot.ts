@@ -3,6 +3,7 @@ import { config, isAllowedUser } from './config.js';
 import { logger } from './logger.js';
 import { getAccountCount, isActualReady } from './actualSession.js';
 import { registerLogTransactionHandlers } from './logTransactionHandlers.js';
+import { registerImageHandlers } from './imageHandlers.js';
 import { registerReportCommands } from './reports.js';
 
 export function createBot(): Bot {
@@ -44,6 +45,9 @@ export function createBot(): Bot {
   // a transaction).
   registerReportCommands(bot);
   registerLogTransactionHandlers(bot);
+  // Image handlers listen on message:photo / message:document only, so they
+  // never compete with the message:text ordering above.
+  registerImageHandlers(bot);
 
   bot.catch((err) => {
     logger.error('bot_error', { err: String(err.error), ctx: err.ctx.update.update_id });
