@@ -1,5 +1,5 @@
 import * as actualApi from '@actual-app/api';
-import type { Bot, Context } from 'grammy';
+import type { Composer, Context } from 'grammy';
 import { formatVnd } from './money.js';
 import { renderTextTable } from './textTable.js';
 import { parseSpendingQuery } from './spendingQuery.js';
@@ -164,7 +164,7 @@ async function withActualReadyGuard(ctx: Context, run: () => Promise<string>): P
 }
 
 /** Registers the read-side report commands. Call once from bot.ts. */
-export function registerReportCommands(bot: Bot): void {
+export function registerReportCommands(bot: Composer<Context>): void {
   bot.command('help', async (ctx) => {
     await ctx.reply(HELP_TEXT, { parse_mode: 'Markdown' });
   });

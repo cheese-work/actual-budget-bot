@@ -1,4 +1,4 @@
-import type { Bot } from 'grammy';
+import type { Composer, Context } from 'grammy';
 import { logger } from './logger.js';
 import {
   cancelPendingTransaction,
@@ -17,7 +17,7 @@ const RESULT_MESSAGES = {
 } as const;
 
 /** Registers /yes, /no, /undo and the free-text transaction-logging handler. */
-export function registerLogTransactionHandlers(bot: Bot): void {
+export function registerLogTransactionHandlers(bot: Composer<Context>): void {
   bot.command('yes', async (ctx) => {
     const userId = ctx.from?.id;
     if (userId === undefined) return;
