@@ -2,7 +2,7 @@ import type { Composer, Context } from 'grammy';
 import { config } from './config.js';
 import { ask, type IntentContext, type MessageIntent } from './jev.js';
 import { getAccounts, getCategories } from './actualSession.js';
-import { replySpendingQuery } from './reports.js';
+import { parseTransactionMessage } from './parse.js';
 import { logger } from './logger.js';
 
 /**
@@ -33,15 +33,18 @@ export type IntentRouterDeps = {
   classifyIntent: (context: IntentContext) => Promise<MessageIntent | null>;
   getAccounts: typeof getAccounts;
   getCategories: typeof getCategories;
-  replySpendingQuery: typeof replySpendingQuery;
 };
 
-const defaultDeps: IntentRouterDeps = {
+/**
+ * Exported so tests can assert directly on the production wiring (is Jev
+ * really off by default?) instead of only on hand-built stub deps — see
+ * botRouting.test.ts's "production config" tests (CHE-661 review finding 4).
+ */
+export const defaultDeps: IntentRouterDeps = {
   enabled: config.jevEnabled && Boolean(config.typesafeApiKey),
   classifyIntent: ask,
   getAccounts,
   getCategories,
-  replySpendingQuery,
 };
 
 function toIsoDateToday(): string {
@@ -50,6 +53,27 @@ function toIsoDateToday(): string {
   const m = String(d.getMonth() + 1).padStart(2, '0');
   const day = String(d.getDate()).padStart(2, '0');
   return `${y}-${m}-${day}`;
+}
+
+// CHE-661 review finding 1: parseSpendingQuery's category extraction is
+// tuned for reports.ts's own SPENDING_QUERY_PATTERN phrasings ("how much…",
+// "what did i spend…"). Jev-routed text matches neither phrasing, so
+// feeding it into that parser produces a nonsense "No category matching
+// ... found" reply that leaks internal parser state. Don't guess a report
+// here — reply with an honest, short disambiguation instead, pointing at
+// the affordances that DO work.
+const SPENDING_QUERY_HINTS =
+  'Try /recent, /summary, or ask "how much on <category> this month?" / "what did I spend yesterday?".';
+
+// Finding 2: a false-positive hint match on real, deterministically-parseable
+// expense text (e.g. "spent 45k on coffee") must not silently drop the
+// expense with no signal. When the same text would have been logged, say so.
+const LOG_HINT_SUFFIX =
+  ' If you meant to log an expense, resend it without the question wording, e.g. `45k coffee`.';
+
+function buildSpendingQueryReply(text: string): string {
+  const base = `Read that as a question, not an expense to log — nothing was recorded. ${SPENDING_QUERY_HINTS}`;
+  return parseTransactionMessage(text) ? `${base}${LOG_HINT_SUFFIX}` : base;
 }
 
 /**
@@ -64,7 +88,11 @@ function toIsoDateToday(): string {
  * including every Jev failure (disabled, unconfigured, timeout, non-200,
  * malformed body, unknown label, low confidence) — falls through via
  * `next()` to exactly today's deterministic-parse-then-log behavior. Jev
- * disabled and Jev unreachable are deliberately indistinguishable.
+ * disabled and Jev unreachable are deliberately indistinguishable in terms
+ * of ROUTING OUTCOME only — not at the side-effect level (enabled-but-
+ * unreachable still does the account/category fetch, still makes the
+ * outbound Jev call, and still adds latency; see ENV_VARS.md's privacy
+ * note for the full list).
  */
 export function registerIntentRouter(
   bot: Composer<Context>,
@@ -87,15 +115,26 @@ export function registerIntentRouter(
       return next();
     }
 
-    const intent = await deps.classifyIntent({
-      text,
-      accountNames,
-      categoryNames,
-      today: toIsoDateToday(),
-    });
+    let intent: MessageIntent | null;
+    try {
+      intent = await deps.classifyIntent({
+        text,
+        accountNames,
+        categoryNames,
+        today: toIsoDateToday(),
+      });
+    } catch (err) {
+      // Finding 5: classifyIntent is documented as "never throws" (jev.ts),
+      // but that's a contract, not a guarantee — a defence-in-depth guard
+      // belongs here regardless of whether the callee upholds it. Without
+      // this, a throw here rejects the whole middleware chain: no log write,
+      // no reply, total silence for the user (strictly worse than base).
+      logger.warn('intent_router_classify_failed', { err: String(err) });
+      return next();
+    }
 
     if (intent === 'spending_query') {
-      return deps.replySpendingQuery(ctx, text);
+      return ctx.reply(buildSpendingQueryReply(text));
     }
     return next();
   });
