@@ -35,14 +35,21 @@ function parseBoundedNumber(
   raw: string | undefined,
   fallback: number,
   isValid: (value: number) => boolean,
+  // Custom coercion hook (default: plain `Number()`). Used by the
+  // integer-only knobs below to reject hex/binary/exponent notation that
+  // `Number()` alone would happily accept (JEV_TIMEOUT_MS review finding) —
+  // `Number()` still backs the default so decimal knobs (e.g. confidence)
+  // keep their existing behavior.
+  parse: (trimmed: string) => number = Number,
 ): number {
   if (raw === undefined) {
     return fallback;
   }
-  // Reject "set but empty" before Number() ever sees it: Number('') is 0,
-  // which would otherwise be silently accepted as a real value whenever 0
-  // happens to be in range (e.g. confidence).
-  const value = raw.trim() === '' ? NaN : Number(raw);
+  const trimmed = raw.trim();
+  // Reject "set but empty" before the parser ever sees it: `Number('')` is
+  // 0, which would otherwise be silently accepted as a real value whenever
+  // 0 happens to be in range (e.g. confidence).
+  const value = trimmed === '' ? NaN : parse(trimmed);
   if (isValid(value)) {
     return value;
   }
@@ -50,12 +57,39 @@ function parseBoundedNumber(
   return fallback;
 }
 
+// Digits only (after trim) — deliberately narrower than `Number()`'s own
+// grammar so "0x10" / "0b11" / "1e3" / "1.5" are all rejected instead of
+// silently coerced. Whitespace around the digits (e.g. " 800 ") is fine
+// since the caller trims before this ever sees the string.
+const INTEGER_SHAPE = /^\d+$/;
+
+function parseStrictIntegerString(trimmed: string): number {
+  return INTEGER_SHAPE.test(trimmed) ? Number(trimmed) : NaN;
+}
+
 const JEV_MIN_CONFIDENCE_DEFAULT = 0.85;
 const JEV_TIMEOUT_MS_DEFAULT = 1500;
-// Generous sanity ceiling — well above any real network timeout — so a
-// fat-fingered value (e.g. an accidental extra digit) degrades to the
-// default instead of hanging the request for minutes.
-const JEV_TIMEOUT_MS_MAX = 60_000;
+// A real Jev call is documented at ~70-500ms end-to-end; 5s is already 10x+
+// headroom over that, so a fat-fingered value degrades to the default
+// instead of turning one chat message into a multi-second stall. (Lowered
+// from a prior 60s ceiling — this is a pre-gate on a chat handler, not a
+// long-running job.)
+const JEV_TIMEOUT_MS_MAX = 5_000;
+// A timeout below this is indistinguishable from "the feature is silently
+// dead" — every real call would abort before Jev's own compute finishes,
+// and Jev-disabled/Jev-unreachable are deliberately unobservable from the
+// outside, so there'd be no operator-visible signal.
+const JEV_TIMEOUT_MS_MIN = 50;
+
+const SYNC_INTERVAL_MS_DEFAULT = 5 * 60 * 1000;
+// Anything faster than this turns a misconfiguration (e.g. a blank env var
+// coercing to 0/NaN, see actualSession.ts's setInterval) into a
+// sub-millisecond hammer against the Actual server.
+const SYNC_INTERVAL_MS_MIN = 1_000;
+// Generous sanity ceiling for a background sync cadence — bounds an
+// obviously-wrong value (e.g. an accidental extra digit) without
+// constraining any real deployment choice.
+const SYNC_INTERVAL_MS_MAX = 24 * 60 * 60 * 1000;
 
 /** Exported for tests only — see config.test.ts. */
 export function parseJevMinConfidence(
@@ -66,7 +100,11 @@ export function parseJevMinConfidence(
     'JEV_MIN_CONFIDENCE',
     raw,
     fallback,
-    (value) => Number.isFinite(value) && value >= 0 && value <= 1,
+    // Strictly positive: a floor of 0 (or -0) is not a floor at all — every
+    // answer, including one the model itself flags as zero-confidence,
+    // would clear it. See config.test.ts for the concrete underflow/negative-
+    // zero/hex routes that used to reach exactly 0 here.
+    (value) => Number.isFinite(value) && value > 0 && value <= 1,
   );
 }
 
@@ -79,7 +117,24 @@ export function parseJevTimeoutMs(
     'JEV_TIMEOUT_MS',
     raw,
     fallback,
-    (value) => Number.isInteger(value) && value > 0 && value <= JEV_TIMEOUT_MS_MAX,
+    (value) =>
+      Number.isInteger(value) && value >= JEV_TIMEOUT_MS_MIN && value <= JEV_TIMEOUT_MS_MAX,
+    parseStrictIntegerString,
+  );
+}
+
+/** Exported for tests only — see config.test.ts. */
+export function parseSyncIntervalMs(
+  raw: string | undefined,
+  fallback: number = SYNC_INTERVAL_MS_DEFAULT,
+): number {
+  return parseBoundedNumber(
+    'SYNC_INTERVAL_MS',
+    raw,
+    fallback,
+    (value) =>
+      Number.isInteger(value) && value >= SYNC_INTERVAL_MS_MIN && value <= SYNC_INTERVAL_MS_MAX,
+    parseStrictIntegerString,
   );
 }
 
@@ -93,7 +148,7 @@ export const config = {
   actualFilePassword: process.env.ACTUAL_FILE_PASSWORD ?? '',
   actualDataDir: process.env.ACTUAL_DATA_DIR ?? '/data/actual-cache',
   allowedTelegramUserIds: parseAllowedUserIds(process.env.ALLOWED_TELEGRAM_USER_IDS),
-  syncIntervalMs: Number(process.env.SYNC_INTERVAL_MS ?? 5 * 60 * 1000),
+  syncIntervalMs: parseSyncIntervalMs(process.env.SYNC_INTERVAL_MS),
   // Only required for the free-text transaction fallback path (ambiguous
   // messages the deterministic parser can't handle). Absent when unset;
   // that path degrades to "please rephrase" instead of throwing.

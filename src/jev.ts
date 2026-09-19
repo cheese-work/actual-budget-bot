@@ -56,6 +56,15 @@ export async function ask(context: IntentContext): Promise<MessageIntent | null>
 
   if (!response.ok) {
     logger.warn('jev_non_200', { status: response.status });
+    // We never read this body — cancel it explicitly to document that the
+    // stream is intentionally abandoned, not forgotten. Best-effort: some
+    // Response implementations (e.g. already-consumed/null bodies in tests)
+    // don't support cancel() or can throw synchronously.
+    try {
+      response.body?.cancel();
+    } catch {
+      // Nothing to do — we're discarding this response either way.
+    }
     return null;
   }
 
@@ -67,11 +76,81 @@ export async function ask(context: IntentContext): Promise<MessageIntent | null>
     return null;
   }
 
-  const intent = parseIntentAnswer(body);
-  if (intent === null) {
-    logger.warn('jev_answer_rejected', { body: JSON.stringify(body).slice(0, 500) });
+  // The whole parse+log region must never throw: `ask()`'s contract is
+  // "never throws" (see the doc comment above), and a caller like
+  // intentRouter.ts awaits this with no try/catch of its own — an escaping
+  // exception here drops the user's message entirely instead of degrading
+  // to "Jev wasn't consulted". This wraps parseIntentAnswer (already
+  // exception-free by construction — see its own guards) AND the logging
+  // that follows it, as defense in depth against a future change to either.
+  try {
+    const parsed = parseIntentAnswer(body);
+    switch (parsed.kind) {
+      case 'ok':
+        return parsed.intent;
+      case 'low_confidence':
+        // Routine, expected path (most answers land below a calibrated
+        // 0.85+ floor) — log quietly, and only the validated label plus the
+        // numeric confidence, never arbitrary server content.
+        logger.info('jev_answer_below_threshold', {
+          choice: parsed.choice,
+          confidence: parsed.confidence,
+        });
+        return null;
+      case 'malformed':
+        // Genuinely unexpected shape — worth a warn, but never the full
+        // body: see summarizeBody for why (unbounded size, unbounded
+        // nesting depth, and potential echoed request content).
+        logger.warn('jev_answer_rejected', summarizeBody(body));
+        return null;
+    }
+  } catch (err) {
+    logger.warn('jev_answer_rejected', { err: String(err) });
+    return null;
   }
-  return intent;
+}
+
+const MAX_SUMMARY_KEYS = 20;
+const MAX_SUMMARY_STRING_LENGTH = 100;
+
+/**
+ * A bounded, non-recursive stand-in for logging the raw response body.
+ * Deliberately never calls JSON.stringify(body): that call is recursive in
+ * V8 and both (a) blows the stack on a body nested a few thousand levels
+ * deep regardless of the eventual `.slice()`, and (b) fully materializes an
+ * arbitrarily large body just to keep a short prefix, blocking the event
+ * loop. `Object.keys` is shallow — it can't be made to recurse by nested
+ * content — so this stays O(top-level key count) no matter what the server
+ * sends. Also never echoes arbitrary response text (privacy: the API may
+ * one day echo request `state` back, which would include raw message text
+ * and account/category names).
+ */
+function summarizeBody(body: unknown): Record<string, unknown> {
+  if (typeof body !== 'object' || body === null) {
+    return { bodyType: typeof body };
+  }
+  const record = body as Record<string, unknown>;
+  const keys = Object.keys(record);
+  const summary: Record<string, unknown> = {
+    bodyKeys: keys.slice(0, MAX_SUMMARY_KEYS),
+    bodyKeyCount: keys.length,
+  };
+
+  const answers = record.answers;
+  if (typeof answers === 'object' && answers !== null) {
+    const answer = (answers as Record<string, unknown>)[QUESTION_ID];
+    if (typeof answer === 'object' && answer !== null) {
+      const { choice, confidence } = answer as Record<string, unknown>;
+      if (typeof choice === 'string') {
+        summary.choice = choice.slice(0, MAX_SUMMARY_STRING_LENGTH);
+      }
+      if (typeof confidence === 'number') {
+        summary.confidence = confidence;
+      }
+    }
+  }
+
+  return summary;
 }
 
 function buildRequestBody(context: IntentContext): unknown {
@@ -111,28 +190,34 @@ function buildRequestBody(context: IntentContext): unknown {
  * without becoming a different JS type). Guard with `Number.isFinite` plus
  * an explicit [0,1] range check, not just a `typeof` check.
  */
-function parseIntentAnswer(body: unknown): MessageIntent | null {
-  if (typeof body !== 'object' || body === null) return null;
+type ParseResult =
+  | { kind: 'ok'; intent: MessageIntent }
+  | { kind: 'low_confidence'; choice: MessageIntent; confidence: number }
+  | { kind: 'malformed' };
+
+function parseIntentAnswer(body: unknown): ParseResult {
+  if (typeof body !== 'object' || body === null) return { kind: 'malformed' };
 
   const answers = (body as Record<string, unknown>).answers;
-  if (typeof answers !== 'object' || answers === null) return null;
+  if (typeof answers !== 'object' || answers === null) return { kind: 'malformed' };
 
   const answer = (answers as Record<string, unknown>)[QUESTION_ID];
-  if (typeof answer !== 'object' || answer === null) return null;
+  if (typeof answer !== 'object' || answer === null) return { kind: 'malformed' };
 
   const { choice, confidence } = answer as Record<string, unknown>;
 
-  if (typeof choice !== 'string' || !isIntentLabel(choice)) return null;
-  if (!isValidConfidence(confidence)) return null;
-  if (confidence < config.jevMinConfidence) return null;
+  if (typeof choice !== 'string' || !isIntentLabel(choice)) return { kind: 'malformed' };
+  if (!isValidConfidence(confidence)) return { kind: 'malformed' };
+  if (confidence < config.jevMinConfidence) return { kind: 'low_confidence', choice, confidence };
 
-  return choice;
+  return { kind: 'ok', intent: choice };
 }
 
 function isIntentLabel(value: string): value is MessageIntent {
   return (INTENT_LABELS as readonly string[]).includes(value);
 }
 
-function isValidConfidence(value: unknown): value is number {
+/** Exported for tests only — see jev.test.ts. */
+export function isValidConfidence(value: unknown): value is number {
   return typeof value === 'number' && Number.isFinite(value) && value >= 0 && value <= 1;
 }
