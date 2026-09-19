@@ -92,6 +92,10 @@ export async function handleImageMessage(
     return { kind: 'cannotExtract' };
   }
 
+  if (merged.amountUncertain) {
+    logger.warn('vision_amount_low_confidence', { userId, messageKey });
+  }
+
   // Category is model-free whenever this merchant was learned from a prior
   // confirmation (see transactions.ts#confirmPendingTransaction) — no
   // categorization call, and repeat screenshots from the same merchant cost
@@ -132,6 +136,7 @@ export async function handleImageMessage(
 type MergedFields = {
   amount: number | null; // signed
   amountFromCaption: boolean;
+  amountUncertain: boolean;
   payeeName: string | null;
   date: string;
   accountKeyword: string | null;
@@ -152,6 +157,10 @@ function mergeCaptionAndVision(
   return {
     amount,
     amountFromCaption: captionAmount !== null,
+    // Only the image-sourced amount can be misread. A typed caption amount is
+    // what the user meant regardless of how legible the photo was, so a 'low'
+    // confidence from the model is not a reason to doubt it.
+    amountUncertain: captionAmount === null && vision?.confidence === 'low',
     payeeName: caption?.payee ?? vision?.merchant ?? null,
     date: caption?.date ?? vision?.date ?? toIsoDateToday(),
     accountKeyword: caption?.accountKeyword ?? vision?.sourceAccountHint ?? null,
@@ -159,12 +168,30 @@ function mergeCaptionAndVision(
   };
 }
 
+/**
+ * The model is instructed to report `confidence: 'low'` whenever the amount
+ * digits are blurred, glared or cropped (see visionExtract.ts). Those are
+ * exactly the conditions that produce a decimal-separator misread, and a
+ * misread separator is a 1000x error in VND. The confirmation step catches it
+ * only if the reader is told WHICH digits to re-check, so the warning names
+ * the failure mode instead of asking for a generic second look.
+ */
 function formatSummary(pending: FallbackResult, merged: MergedFields): string {
-  const provenance = merged.amountFromCaption ? '(from caption)' : '(from image)';
+  const provenance = merged.amountFromCaption
+    ? '(from caption)'
+    : merged.amountUncertain
+      ? '(from image, low confidence)'
+      : '(from image)';
   const parts = [`${formatVnd(pending.amount)} ${provenance}`];
   if (pending.payeeName) parts.push(pending.payeeName);
   if (pending.categoryName) parts.push(`(${pending.categoryName})`);
   if (pending.accountName) parts.push(`via ${pending.accountName}`);
   parts.push(`on ${pending.date}`);
-  return `${parts.join(' ')}\n\nConfirm? /yes to log, /no to cancel.`;
+
+  const warning = merged.amountUncertain
+    ? '\n\n⚠️ The amount digits were not clearly legible. Re-read them against the ' +
+      "photo before confirming — a misplaced ',' or '.' is a 1000x error."
+    : '';
+
+  return `${parts.join(' ')}${warning}\n\nConfirm? /yes to log, /no to cancel.`;
 }
