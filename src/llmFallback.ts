@@ -1,6 +1,7 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { config } from './config.js';
 import { logger } from './logger.js';
+import { createLlmClient } from './llmClient.js';
 
 export type FallbackContext = {
   accountNames: string[];
@@ -30,12 +31,11 @@ export async function parseWithLlm(
   text: string,
   context: FallbackContext,
 ): Promise<FallbackResult | null> {
-  if (!config.anthropicApiKey) {
+  const client = createLlmClient();
+  if (!client) {
     logger.warn('llm_fallback_unconfigured');
     return null;
   }
-
-  const client = new Anthropic({ apiKey: config.anthropicApiKey });
 
   const response = await client.messages.create({
     model: config.anthropicModel,
