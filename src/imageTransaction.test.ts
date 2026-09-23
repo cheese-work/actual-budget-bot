@@ -133,13 +133,51 @@ test('duplicate messageKey is claimed once -- second call is a no-op', async () 
   assert.deepEqual(second, { kind: 'duplicate' });
 });
 
-function visionResult(fields: { amount: number | null; merchant: string | null }): VisionExtraction {
+test('a low-confidence image amount warns about the decimal separator', async () => {
+  const deps = makeDeps({
+    vision: visionResult({ amount: 45000, merchant: 'Grab Food', confidence: 'low' }),
+  });
+  const result = await handleImageMessage(1, IMAGE, null, nextMessageKey(), deps);
+  assert.equal(result.kind, 'needsConfirmation');
+  assert.ok(result.kind === 'needsConfirmation');
+  assert.match(result.summary, /low confidence/);
+  assert.match(result.summary, /not clearly legible/);
+  // Still a confirmation, never an auto-write.
+  assert.match(result.summary, /\/yes to log/);
+  transactionStore.takePending(1);
+});
+
+test('a high-confidence image amount carries no warning', async () => {
+  const deps = makeDeps({ vision: visionResult({ amount: 45000, merchant: 'Grab Food' }) });
+  const result = await handleImageMessage(1, IMAGE, null, nextMessageKey(), deps);
+  assert.ok(result.kind === 'needsConfirmation');
+  assert.match(result.summary, /\(from image\)/);
+  assert.doesNotMatch(result.summary, /legible/);
+  transactionStore.takePending(1);
+});
+
+test('a typed caption amount is not doubted by a low-confidence extraction', async () => {
+  const deps = makeDeps({
+    vision: visionResult({ amount: 450, merchant: 'Grab Food', confidence: 'low' }),
+  });
+  const result = await handleImageMessage(1, IMAGE, '45000', nextMessageKey(), deps);
+  assert.ok(result.kind === 'needsConfirmation');
+  assert.match(result.summary, /\(from caption\)/);
+  assert.doesNotMatch(result.summary, /legible/);
+  assert.equal(transactionStore.takePending(1)?.result.amount, -45000);
+});
+
+function visionResult(fields: {
+  amount: number | null;
+  merchant: string | null;
+  confidence?: 'high' | 'low';
+}): VisionExtraction {
   return {
     amount: fields.amount,
     currency: 'VND',
     merchant: fields.merchant,
     date: null,
     sourceAccountHint: null,
-    confidence: 'high',
+    confidence: fields.confidence ?? 'high',
   };
 }
