@@ -6,6 +6,7 @@ import { registerAccountsCommands } from './accountsCommands.js';
 import { registerLogTransactionHandlers } from './logTransactionHandlers.js';
 import { registerImageHandlers } from './imageHandlers.js';
 import { registerReportCommands } from './reports.js';
+import { registerIntentRouter } from './intentRouter.js';
 
 export function createBot(): Bot {
   const bot = new Bot(config.telegramBotToken);
@@ -37,17 +38,25 @@ export function createBot(): Bot {
     }
   });
 
-  // Order matters: all three modules register a message:text handler.
+  // Order matters: all four modules below register a message:text handler.
   // Accounts must run first — it only intercepts while a user is mid a
   // /setbalance-style confirmation flow, calling next() otherwise, so it
-  // never shadows the other two. Reports runs next — its handler calls
-  // next() for anything that doesn't match a spending-query pattern,
-  // falling through to log-transaction cleanly. The log handler replies and
-  // stops on almost everything, so it must run last: registering it earlier
-  // would make report queries unreachable (and worse, a query that happens
-  // to contain an amount would get silently logged as a transaction).
+  // never shadows the rest. Reports runs next — its handler calls next()
+  // for anything that doesn't match a spending-query pattern, falling
+  // through cleanly. The Jev intent router runs next — for messages that
+  // regex didn't already claim, it asks Jev (when enabled) whether the
+  // message is actually a spending question in disguise (e.g. "did I spend
+  // 45k on coffee yesterday?" parses as a loggable amount but is a
+  // question); a `spending_query` verdict replies with the report and
+  // stops here, before the write path ever sees it. Every other verdict —
+  // including every Jev failure — falls through unchanged. The log handler
+  // replies and stops on almost everything, so it must run last:
+  // registering it earlier would make report queries unreachable (and
+  // worse, a query that happens to contain an amount would get silently
+  // logged as a transaction — the CHE-661 defect the intent router fixes).
   registerAccountsCommands(bot);
   registerReportCommands(bot);
+  registerIntentRouter(bot);
   registerLogTransactionHandlers(bot);
   // Image handlers listen on message:photo / message:document only, so they
   // never compete with the message:text ordering above.

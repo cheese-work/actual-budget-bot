@@ -173,6 +173,15 @@ async function withActualReadyGuard(ctx: Context, run: () => Promise<string>): P
   }
 }
 
+/**
+ * Replies to `ctx` with the spending-query report for `text`. Exported so
+ * intentRouter.ts can route a Jev-classified `spending_query` message here
+ * too, without duplicating the regex-matched path's behavior.
+ */
+export async function replySpendingQuery(ctx: Context, text: string): Promise<void> {
+  return withActualReadyGuard(ctx, () => getSpendingQueryReport(text));
+}
+
 /** Registers the read-side report commands. Call once from bot.ts. */
 export function registerReportCommands(bot: Composer<Context>): void {
   bot.command('help', async (ctx) => {
@@ -193,6 +202,6 @@ export function registerReportCommands(bot: Composer<Context>): void {
     if (text.startsWith('/') || !SPENDING_QUERY_PATTERN.test(text)) {
       return next();
     }
-    return withActualReadyGuard(ctx, () => getSpendingQueryReport(text));
+    return replySpendingQuery(ctx, text);
   });
 }
