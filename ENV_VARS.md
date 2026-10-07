@@ -1,5 +1,18 @@
 # Required environment variables
 
+## Release version
+
+CD generates one ICT build stamp on X99 and bakes it into the image as `RELEASE_BUILD`.
+The `bot_started` JSON log exposes `version` from `package.json`, `build` (`YYYYMMDD-hhmm`), and `displayVersion` (`<version>-<build>`).
+The display string is not used for version comparisons. The image tag adds the source SHA: `<version>-<build>-<sha7>`.
+Local and PR builds do not generate a stamp; `build` is empty and `displayVersion` is the plain package version.
+`RELEASE_BUILD` is image metadata, not an operator setting; do not put it in the deploy host's `.env`.
+
+The release job calls `.github/release-tools/release-stamp.sh`, an exact snapshot of `cheese-work/multica-dotfiles/scripts/release-stamp.sh` at `5dafb3d959466df589353a8de1da0def15102a62` (CHE-1308).
+The snapshot avoids a cross-repository token for the private tooling repository. Its SHA-256 is checked in `src/version.test.ts`; update the snapshot and checksum together when the shared script changes.
+
+## Operator settings
+
 Copy into `.env` on the deploy host (congvc-c00). Never commit `.env`.
 
 ```
