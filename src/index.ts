@@ -1,8 +1,10 @@
 import { createBot } from './bot.js';
 import { startActualSession, stopActualSession } from './actualSession.js';
 import { logger } from './logger.js';
+import { getVersionInfo } from './version.js';
 
 async function main(): Promise<void> {
+  const versionInfo = getVersionInfo();
   await startActualSession();
 
   const bot = createBot();
@@ -22,7 +24,7 @@ async function main(): Promise<void> {
   process.once('SIGINT', () => void shutdown('SIGINT'));
 
   await bot.start({
-    onStart: () => logger.info('bot_started'),
+    onStart: () => logger.info('bot_started', versionInfo),
   });
 }
 

@@ -41,6 +41,15 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
         with:
+          ref: ${{ github.sha }}
+          fetch-depth: 1
+
+      - name: Preserve release tooling
+        run: cp .github/release-tools/release-stamp.sh "$RUNNER_TEMP/release-stamp.sh"
+
+      - name: Checkout application
+        uses: actions/checkout@v4
+        with:
           ref: ${{ github.event.inputs.ref || github.sha }}
           fetch-depth: 1
 
@@ -58,12 +67,19 @@ jobs:
       - name: Test
         run: npm test
 
-      - name: Resolve image tag
+      - name: Resolve release version
         id: tag
-        run: echo "tag=$(git rev-parse --short=7 HEAD)" >> "$GITHUB_OUTPUT"
+        run: |
+          version=$(node -p "require('./package.json').version")
+          build=$(sh "$RUNNER_TEMP/release-stamp.sh")
+          tag="${version}-${build}-$(git rev-parse --short=7 HEAD)"
+          printf 'version=%s\nbuild=%s\ntag=%s\n' "$version" "$build" "$tag" >> "$GITHUB_OUTPUT"
 
       - name: Build image
-        run: docker build -t "actual-budget-bot:${{ steps.tag.outputs.tag }}" .
+        run: >-
+          docker build
+          --build-arg "RELEASE_BUILD=${{ steps.tag.outputs.build }}"
+          -t "actual-budget-bot:${{ steps.tag.outputs.tag }}" .
 
       - name: Ship image to C00 and deploy
         env:
